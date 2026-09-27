@@ -82,9 +82,18 @@ src/ecohydro_sm/
     validation/     指标、空间块 CV、三重配置
     utils/          地理与绘图工具
 scripts/            按执行顺序编号的生产脚本
+scripts/gee_s2_indices.js  Google Earth Engine 上的 S-2 指数与掩膜处理
 tests/              纯数值单元测试（不需要影像数据）
-docs/               工作流说明
+docs/               工作流说明与实验手册
 ```
+
+## 混合架构：GEE + 本地
+
+| 环节 | 平台 | 说明 |
+|---|---|---|
+| Sentinel-2 云掩膜、NDVI/NDMI/FVC、站点抽表 | **GEE** | 见 `scripts/gee_s2_indices.js`，免下载、分钟级 |
+| Sentinel-1 RTC | 本地（HyP3） | GEE 的 S-1 无地形辐射校正 |
+| InSAR 相干性与形变（L2/L4） | **必须本地** | GEE 没有 S-1 SLC，无相位信息 |
 
 ## 引用
 
