@@ -1,0 +1,96 @@
+# 默认配置模板 —— 复制为 <研究区>.yaml 后按需修改
+# 注意：此文件不含任何凭据。凭据走环境变量或 ~/.netrc（见 docs/workflow.md）
+
+study_area:
+  name: "TEMPLATE"
+  bbox: [102.5, 38.5, 103.5, 39.2]   # [min_lon, min_lat, max_lon, max_lat]
+  epsg_utm: null                      # null = 按中心经度自动选 UTM 带
+  description: ""
+
+paths:
+  s1_rtc: "data_processed/s1_rtc"
+  s1_slc_stack: "data_processed/s1_slc"
+  s2_l2a: "data_processed/s2_l2a"
+  era5land: "data_raw/era5land"
+  soilgrids: "data_raw/soilgrids"
+  dem: "data_raw/dem"
+  in_situ: "data_raw/in_situ"
+  mintpy: "data_processed/mintpy"
+  output: "outputs"
+
+# ---------- L1：表层土壤水（SAR + 光学融合） ----------
+l1_retrieval:
+  estimator: "mlp"            # mlp | rf
+  freq_ghz: 5.405             # Sentinel-1 C 波段
+  pol: "VV"
+  wcm:
+    a_param: 0.35             # 必须本地标定
+    b_param: 0.12             # 必须本地标定
+    e_param: 1.0
+  synthetic_db:
+    mv_min: 0.02
+    mv_max: 0.50
+    h_rms_min: 0.3
+    h_rms_max: 3.0
+    vwc_max: 6.0
+    theta_min: 30.0
+    theta_max: 45.0
+    n_samples: 60000
+    noise_db: 0.35
+  residual_correction:
+    enabled: true
+    min_samples_for_model: 20
+  aggregate_factor: 3          # 10 m RTC -> 30 m 产品（标称分辨率必须与实际一致）
+
+# ---------- 掩膜 ----------
+masking:
+  theta_min: 25.0
+  theta_max: 45.0
+  air_temp_threshold_c: 1.0
+  soil_temp_threshold_c: 0.0
+  precip_threshold_mm: 1.0
+  precip_lag_days: 1
+  scl_cloud_buffer_pixels: 1
+
+# ---------- L2：InSAR 相干性支路 ----------
+l2_coherence:
+  enabled: true
+  vwc_limit_kg_m2: 2.0         # 超过此值不承诺精度
+  min_gamma: 0.15
+  closure_phase_max_std_rad: 0.8   # 闭合相位残差上限，超过则标记不可用
+  calibrate_per_region: true
+
+# ---------- L4：形变 -> 储变量 ----------
+l4_storage:
+  enabled: true
+  min_seasonal_snr: 3.0        # P0 预检判据：季节振幅信噪比
+  decomposition:
+    periods_days: [365.25, 182.6]
+    trend_order: 1
+    max_lag_days: 120
+  storage:
+    sy_default: 0.10
+    sy_bounds: [0.02, 0.30]
+    ske_bounds: [0.0002, 0.021]
+    n_sensitivity_samples: 200
+  mode: "B"                    # A = 形变直接转储变量；B = 形变仅加密水位场（推荐）
+
+# ---------- L3：水量平衡闭合 ----------
+l3_water_balance:
+  enabled: true
+  runoff_mm: 0.0
+  irrigation_return_fraction: 0.0
+  root_depth_m: 1.0
+  vadose_depth_m: 3.0
+  max_closure_residual_frac: 0.15
+
+# ---------- 验证（不可关闭） ----------
+validation:
+  spatial_block_size_m: 10000
+  n_splits: 5
+  stratify_by_vwc_bins: [0, 0.5, 1.5, 3.0, 99.0]
+  triple_collocation:
+    enabled: true
+    datasets: ["product", "era5land", "smap"]
+    max_error_correlation: 0.3
+  report_metrics: ["bias", "rmse", "ubrmse", "crmse", "pearson_r", "anomaly_r"]

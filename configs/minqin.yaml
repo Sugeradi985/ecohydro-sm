@@ -1,0 +1,96 @@
+# 石羊河下游民勤盆地
+# 反向自然实验：地下水超采 -> 治理回升；荒漠区相干性好、绿洲区去相干
+
+study_area:
+  name: "Minqin"
+  bbox: [102.9, 38.5, 103.9, 39.3]
+  epsg_utm: null
+  description: >
+    河西走廊沙漠绿洲。超采导致地下水位下降与地面沉降，
+    治理后水位回升（2024 年水位 3.18 m、青土湖水域 27.65 km2），
+    构成可检验生态恢复耗水的反向自然实验。
+
+paths:
+  s1_rtc: "data_processed/minqin/s1_rtc"
+  s1_slc_stack: "data_processed/minqin/s1_slc"
+  s2_l2a: "data_processed/minqin/s2_l2a"
+  era5land: "data_raw/era5land"
+  soilgrids: "data_raw/soilgrids"
+  dem: "data_raw/dem"
+  in_situ: "data_raw/in_situ/minqin"
+  mintpy: "data_processed/minqin/mintpy"
+  output: "outputs/minqin"
+
+l1_retrieval:
+  estimator: "mlp"
+  freq_ghz: 5.405
+  pol: "VV"
+  wcm:
+    # 荒漠—绿洲过渡带：稀疏植被冠层，A/B 需用在地生物量样方标定
+    a_param: 0.30
+    b_param: 0.10
+    e_param: 1.0
+  synthetic_db:
+    mv_min: 0.01
+    mv_max: 0.45        # 干旱区上限低于湿润区
+    h_rms_min: 0.3
+    h_rms_max: 3.0
+    vwc_max: 5.0
+    theta_min: 30.0
+    theta_max: 45.0
+    n_samples: 60000
+    noise_db: 0.35
+  residual_correction:
+    enabled: true
+    min_samples_for_model: 20   # < 20 个站点时退化为全局 bias 校正
+  aggregate_factor: 3
+
+masking:
+  theta_min: 25.0
+  theta_max: 45.0
+  air_temp_threshold_c: 1.0
+  soil_temp_threshold_c: 0.0
+  precip_threshold_mm: 1.0
+  precip_lag_days: 1
+  scl_cloud_buffer_pixels: 1
+
+l2_coherence:
+  enabled: true
+  # 民勤优势：荒漠/低矮植被区相干性高，是本支路的理想适用区
+  vwc_limit_kg_m2: 2.0
+  min_gamma: 0.15
+  closure_phase_max_std_rad: 0.8
+  calibrate_per_region: true
+
+l4_storage:
+  enabled: true
+  min_seasonal_snr: 3.0
+  decomposition:
+    periods_days: [365.25, 182.6]
+    trend_order: 1
+    max_lag_days: 120
+  storage:
+    sy_default: 0.10
+    sy_bounds: [0.02, 0.30]
+    ske_bounds: [0.0002, 0.021]
+    n_sensitivity_samples: 200
+  # 民勤井网稀疏，默认走路径 B：形变只用于加密水位场，不做绝对量转换
+  mode: "B"
+
+l3_water_balance:
+  enabled: true
+  runoff_mm: 0.0                   # 内流区，地表径流近似为 0
+  irrigation_return_fraction: 0.1  # 渠系渗漏与灌溉回归水不可忽略
+  root_depth_m: 1.0
+  vadose_depth_m: 3.0
+  max_closure_residual_frac: 0.15
+
+validation:
+  spatial_block_size_m: 10000
+  n_splits: 5
+  stratify_by_vwc_bins: [0, 0.5, 1.5, 3.0, 99.0]
+  triple_collocation:
+    enabled: true
+    datasets: ["product", "era5land", "smap"]
+    max_error_correlation: 0.3
+  report_metrics: ["bias", "rmse", "ubrmse", "crmse", "pearson_r", "anomaly_r"]

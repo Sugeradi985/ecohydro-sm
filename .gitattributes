@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt  text eol=lf
+Makefile text eol=lf
+
+# Windows 下 Makefile 必须保留 LF，否则 make 会报 missing separator
+*.png binary
+*.tif binary
+*.h5  binary
