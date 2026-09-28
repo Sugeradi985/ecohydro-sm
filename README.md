@@ -85,6 +85,7 @@ scripts/            按执行顺序编号的生产脚本
 scripts/gee_s2_indices.js  Google Earth Engine 上的 S-2 指数与掩膜处理
 tests/              纯数值单元测试（不需要影像数据）
 docs/               工作流说明与实验手册
+docs/station_requirements.md  地面站点的要素、数量、代表性与获取途径
 ```
 
 ## 混合架构：GEE + 本地

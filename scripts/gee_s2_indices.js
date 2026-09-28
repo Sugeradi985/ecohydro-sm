@@ -30,6 +30,14 @@ var SCALE = 20;
 
 // ---- 地面站点（可选，但强烈建议配置）----
 // 有了它就可以直接在 GEE 里抽训练/验证表，完全不用导出栅格。
+//
+// 注意：这里抽的是**遥感值**，标签（土壤水真值）来自站点自己的传感器。
+// 所以站点必须自带独立的土壤水观测，仅有坐标没有意义。
+//
+// FeatureCollection 必备属性（详见 docs/station_requirements.md）：
+//   station_id, lon, lat, landcover, sand, silt, clay, bulk_density
+// 建议属性：
+//   crop_type, organic_matter, elevation, slope, has_crns, n_replicates
 var STATIONS = ee.FeatureCollection([]); // 替换为上传的站点 Asset
 
 // ============================================================
