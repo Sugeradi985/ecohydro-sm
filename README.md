@@ -86,6 +86,7 @@ scripts/gee_s2_indices.js  Google Earth Engine 上的 S-2 指数与掩膜处理
 tests/              纯数值单元测试（不需要影像数据）
 docs/               工作流说明与实验手册
 docs/station_requirements.md  地面站点的要素、数量、代表性与获取途径
+docs/in_situ_data_sources.md  已有研究案例用了什么站点数据、各自能否公开获取
 ```
 
 ## 混合架构：GEE + 本地

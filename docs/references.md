@@ -43,3 +43,18 @@
 
 - NISAR L3 SME2 — 200 m 土壤水，DSG/PMI/TSR 三算法平均，精度目标 0.06 m³/m³，VWC > 5 kg/m² 需打标。文档：nisar-docs.asf.alaska.edu/sme2
 - ESA CCI Soil Moisture、SMAP L3、ERA5-Land、GLEAM / PML_V2 ET、SoilGrids 2.0。
+
+## 地面观测数据与可获取性（详见 docs/in_situ_data_sources.md）
+
+- **ISMN**（ismn.earth，注册下载）— 全球聚合；SMOSMANIA（法国南部 21 站剖面）、Banizombou（Niger）、Ouémé（Benin）均在其中。
+- **Madelon et al., 2023**, *HESS* 27:1221–1242, doi:10.5194/hess-27-1221-2023 — S²MP 1 km 验证。**Merguellil 数据需发邮件向 mehrez.zribi@ird.fr 索取；S²MP 产品与代码需向 nicolas.baghdadi@inrae.fr 索取**（论文 Data/Code availability 原文）。
+- **Bousbih et al., 2018**, *Remote Sensing* 10(12):1953, doi:10.3390/rs10121953 — Kairouan 平原，**20 个谷物参考田块**的地面同步观测（土壤水 + 粗糙度 + LAI），短期野外试验，不进公开库。
+- *Water* 12(3):866, 2020 — 500 m 融合，四站：Occitanie（SMOSMANIA）、Merguellil（CESBIO OSR: osr-cesbio.ups-tlse.fr）、Banizombou、Ouémé。
+- **INSAR4SM 的精度来自 1 个 ISMN 站点**（原文 "a station"，单数）；预印本 arXiv:2210.10665v1 报 RMSE 0.027/R 0.88，正式版为 0.029/0.78、ERA5-Land 0.049/0.62。
+- **黑河上游八宝河**生态水文传感器网络逐时土壤水分（2013–2017，40 节点，4/20 cm）— 国家青藏高原科学数据中心，**开放获取**，doi:10.11888/Hydro.tpdc.271137。
+- **HiWATER WATERNET** 黑河中游（2012，50 节点，4/10 cm，10 min）— 国家青藏高原科学数据中心，**开放获取**，doi:10.3972/hiwater.118.2013.db。
+- **黑河流域地表过程综合观测网**（11–15 站，含宇宙射线仪 CRNS 区域土壤水、土壤温湿廓线至 160 cm）— 逐年发布，申请获取。
+- **民勤站 2021–2023 年水环境要素日尺度数据集**（含土壤含水量）— 国家生态科学数据中心，doi:10.12199/nesdc.ecodb.2021YFF0703900.mcsos.2025.11，**保护期至 2028-03-28**，协议共享。
+- **石羊河尾闾柽柳降水改变试验样地土壤湿度数据集（2020，民勤县，5TM，日尺度）** — 国家冰川冻土沙漠科学数据中心，doi:10.12072/ncdc.nieer.db3924.2023，申请获取。
+- **2002 年甘肃省石羊河流域土壤特征参数数据集**（30 采样点，民勤 12 点；质地/容重/饱和含水率/水分特征曲线）— 国家生态科学数据中心，doi:10.12199/nesdc.ecodb.wwa.mon.018，**公开共享**，可直接用于本地参数化。
+- **中国气象数据网**（data.cma.cn）— 土壤水分自动站**日值/逐时值不开放**，只开放**土壤墒情旬值及以上产品**。
