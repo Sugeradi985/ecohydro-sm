@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from ecohydro_sm.insar.coherence import (
+    PairCoherenceSMConfig,
     assign_pair_signs,
     calibrate_decay_coefficients_pairwise,
     integrate_pair_deltas,
@@ -108,3 +109,37 @@ def test_insufficient_samples_raises():
         calibrate_decay_coefficients_pairwise(
             np.full((2, 2), 0.8), np.zeros((2, 2)), np.zeros((2, 2)), np.array([12, 12])
         )
+
+
+def _constant_dt_data():
+    """Δt 全部 12 天：k_t·Δt 是常数，被截距吸收。"""
+    d = _synthetic_pairs()
+    c, k_sm, k_v, k_t = d["truth"]
+    dt_const = np.full_like(d["dt"], 12.0)
+    c_eff = c - k_t * 12.0
+    gamma = np.exp(c_eff - k_sm * np.abs(d["dsm"]) - k_v * np.abs(d["dv"]))
+    return d, dt_const, c_eff, gamma, (k_sm, k_v)
+
+
+def test_constant_dt_without_fix_is_degenerate():
+    """不固定 k_t 时只有共线组合 c − k_t·12 可识别，单项不可识别。"""
+    d, dt_const, c_eff, gamma, _ = _constant_dt_data()
+    coef = calibrate_decay_coefficients_pairwise(
+        gamma, d["dv"], d["dsm"], dt_const
+    )
+    assert (coef["log_offset"] - coef["k_t"] * 12.0) == pytest.approx(c_eff, abs=0.05)
+
+
+def test_constant_dt_fix_k_t_zero_recovers_other_coefficients():
+    """固定 k_t=0 后，c / k_sm / k_v 可正常恢复，反演链路仍可用。"""
+    d, dt_const, c_eff, gamma, (k_sm, k_v) = _constant_dt_data()
+    cfg = PairCoherenceSMConfig(fix_k_t_zero=True)
+    coef = calibrate_decay_coefficients_pairwise(
+        gamma, d["dv"], d["dsm"], dt_const, cfg=cfg
+    )
+    assert coef["k_t"] == 0.0
+    assert coef["log_offset"] == pytest.approx(c_eff, abs=0.05)
+    assert coef["k_sm"] == pytest.approx(k_sm, abs=0.2)
+    assert coef["k_v"] == pytest.approx(k_v, abs=0.3)
+    mag = invert_delta_sm_from_pairs(gamma, d["dv"], dt_const, coef, cfg=cfg)
+    assert np.mean(np.abs(mag - np.abs(d["dsm"]))) < 0.01

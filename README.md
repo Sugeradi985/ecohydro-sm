@@ -75,7 +75,7 @@ python scripts/08_validate.py --config configs/minqin.yaml
 configs/            配置（研究区、参数、路径）
 src/ecohydro_sm/
     io/             栅格读写（可选依赖 rasterio）
-    preprocess/     斑点滤波、光谱指数、掩膜（云/冻融/入射角）
+    preprocess/     斑点滤波、光谱指数、掩膜（云/冻融/入射角）、时间支撑对齐
     retrieval/      WCM 正向模型、NN 反演、变化检测、残差校正
     insar/          相干性、闭合相位、形变分解、储变量
     fusion/         水量平衡闭合与根区分配
@@ -89,8 +89,10 @@ docs/station_requirements.md  地面站点的要素、数量、代表性与获�
 docs/in_situ_data_sources.md  已有研究案例用了什么站点数据、各自能否公开获取
 docs/next_steps_roadmap.md   下一步行动路线（P0 预检 / 黑河跑通 / 基金写作三线并行）
 docs/yanco_workflow.md       Yanco 试验区完整处理链（HyP3 干涉对 + GEE GRD/S-2）
+docs/temporal_alignment.md   逐干涉对 ↔ 月度光学/GRD 的时间支撑对齐（T-A/T-B/T-C 三条路线）
 configs/yanco.yaml           Yanco 专用配置（EPSG:32755、σ0 口径、pairwise 模式、关闭 L3/L4）
 scripts/00_prepare_yanco.py  数据清点、口径核对、时相配对（支持 --selftest）
+scripts/00b_align_temporal.py 时间支撑对齐表 + 站点诊断（支持 --selftest）
 ```
 
 ## 混合架构：GEE + 本地
@@ -106,6 +108,12 @@ scripts/00_prepare_yanco.py  数据清点、口径核对、时相配对（支持
 > `insar/coherence.py` 提供 pairwise 模式（`calibrate_decay_coefficients_pairwise`、
 > `invert_delta_sm_from_pairs`、`assign_pair_signs`、`integrate_pair_deltas`），
 > 含时间去相干项 k_t 与显式符号赋值。详见 `docs/yanco_workflow.md` §6。
+>
+> **若光学 / GRD 是月度合成**：相干性是 12 天差分、月值是 30 天状态，二者
+> **不能直接按月份取值**（量纲错 + 月内对 ΔV=0 的重复样本 + 事件被平滑）。
+> 先跑 `scripts/00b_align_temporal.py`，用站点诊断决定走逐景插值（T-B，主结果）
+> 还是月度降采样（T-A，稳健性）。Δt 全相同时 k_t 与截距共线，须固定 k_t=0。
+> 详见 `docs/temporal_alignment.md`。
 
 ## 引用
 

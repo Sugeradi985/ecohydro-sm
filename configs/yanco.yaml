@@ -14,8 +14,10 @@ timing:
   sar_time_basis: "UTC"               # S-1 文件名日期为 UTC
   # 降轨约当地清晨 6-7 点 = 前一日 19-21 UTC，故文件名日期比站点当地日期早一天
   descending_local_hour: 6.5
-  match_timezone_offset_hours: 10     # 固定偏移；不要用系统本地时区做换算
+  match_timezone_offset_hours: 10     # 仅作参考；实际换算请用 zoneinfo（下方 site_timezone_tz）
   station_sampling_minutes: 20        # OzNet 原始采样
+  # AEDT 夏令时为 UTC+11，固定 +10 会错 1 小时；用 ZoneInfo 按日期判定
+  site_timezone_tz: "Australia/Sydney"
 
 paths:
   s1_grd: "data_raw/yanco/s1_grd"            # GEE COPERNICUS/S1_GRD，σ0 dB + angle
@@ -40,6 +42,34 @@ input_spec:
   insar_amplitude_band: "amp"
   insar_has_closure_phase: false      # 单对产品无闭合相位，需三景三元组
   s2_scale: 10                        # GEE 导出分辨率 m
+  # 已导出产品的时间粒度（本轮实际状态）
+  s2_temporal_granularity: "monthly"
+  grd_temporal_granularity: "monthly"
+  insar_temporal_granularity: "pairwise"
+  monthly_composite: "unknown"        # mean | median | max(MVC) | unknown —— 必须确认
+
+# ---------- 时间支撑对齐（本轮核心，见 docs/temporal_alignment.md） ----------
+# 相干性是 12 天「差分」，光学/GRD 月值是 30 天「状态」，不能直接按月份取值。
+temporal_alignment:
+  strategy: "B"                       # B 逐景插值(主结果) | A 月度降采样(稳健性) | C 跨月对(敏感性)
+  # 月度合成若是 NDVI 最大值合成(MVC)，值系统性偏高且对应日期不确定，禁止当端点值
+  forbid_mvc_as_endpoint: true
+  # 月度产品的代表日期：取月中，不要取月首（GEE system:time_start 常为月首）
+  month_representative_day: 15
+  max_optical_gap_days: 10           # 端点插值允许的最近有效光学观测间隔
+  # A：γ_ij 聚合成 γ_M；解释变量必须改成月际差分，并保留 dt_mean 协变量
+  monthly_assign_by: "sec"           # ref | sec | mid
+  monthly_reducer: "median"          # median 比 mean 稳健（γ 分布有偏）
+  min_pairs_per_month: 2
+  require_contiguous_months: true    # 缺月处的差分跨 2 个月，时间支撑不同，须置 NaN
+  # C：月内对在月度合成下 ΔV 恒为 0，是纯噪声样本
+  cross_month_only: false
+  # HyP3 配对策略由用户自选（Baseline / SBAS / nearest-neighbor depth<=2）。
+  # 若全部 Δt 相同，k_t·Δt 与截距 c 完全共线，必须固定 k_t=0。
+  dt_variable: "auto"                # auto | constant | variable
+  fit_temporal_decay_if_constant_dt: false
+  # 用 OzNet 20 min 站点量化「月度代理解释多少逐对 ΔSM」，决定 A/C 是否可用
+  diagnostic_r2_threshold: 0.5
 
 # ---------- L1：表层土壤水 ----------
 l1_retrieval:
@@ -87,7 +117,9 @@ l2_coherence:
   max_pair_baseline_days: 24
   min_pairs: 30
   # 模型：ln γ_ij = c − k_sm·|ΔSM_ij| − k_v·|ΔV_ij| − k_t·Δt_ij
-  fit_temporal_decay: true
+  # auto：Δt 全相同时自动固定 k_t=0（与截距共线），否则保留 k_t
+  # 代码侧用 PairCoherenceSMConfig(fix_k_t_zero=True) 落实
+  fit_temporal_decay: "auto"
   dry_anchor_sm: 0.02
   closure_phase_qc: false            # 本轮无三元组，跳过；论文中须声明
   calibrate_per_region: true

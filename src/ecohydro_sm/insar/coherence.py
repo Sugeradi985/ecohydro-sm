@@ -194,6 +194,10 @@ class PairCoherenceSMConfig:
     k_v_init: float = 1.0
     k_t_init: float = 0.002      # 每天的时间去相干系数初值
     k_t_max: float = 0.2
+    # 全部干涉对 Δt 相同时，k_t·Δt 与截距 c 完全共线，k_t 不可识别。
+    # 此时必须置 True（固定 k_t=0），否则 least_squares 会任意分配 k_t 而让 c
+    # 反向补偿，得到一组没有物理意义、也无法复现的系数。
+    fix_k_t_zero: bool = False
     sm_min: float = 0.0
     sm_max: float = 0.5
 
@@ -241,16 +245,30 @@ def calibrate_decay_coefficients_pairwise(
     if r.size < 10:
         raise ValueError("有效样本不足 10 个，无法标定干涉对模型。")
 
-    # p = [c, k_sm, k_v, k_t]
-    def resid(p):
-        return r - (p[0] - p[1] * s - p[2] * v - p[3] * t)
+    if cfg.fix_k_t_zero:
+        # 参数向量降为 3 维，从模型里彻底去掉 Δt 项（不是把 k_t 的界设为 0，
+        # 那样仍留下一个退化的自由度，最小二乘结果依赖初值）
+        def resid3(p):
+            return r - (p[0] - p[1] * s - p[2] * v)
 
-    sol = least_squares(
-        resid,
-        x0=[0.0, cfg.k_sm_init, cfg.k_v_init, cfg.k_t_init],
-        bounds=([-10.0, 0.0, 0.0, 0.0], [10.0, 50.0, 50.0, cfg.k_t_max]),
-    )
-    c, k_sm, k_v, k_t = (float(x) for x in sol.x)
+        sol = least_squares(
+            resid3,
+            x0=[0.0, cfg.k_sm_init, cfg.k_v_init],
+            bounds=([-10.0, 0.0, 0.0], [10.0, 50.0, 50.0]),
+        )
+        c, k_sm, k_v = (float(x) for x in sol.x)
+        k_t = 0.0
+    else:
+        # p = [c, k_sm, k_v, k_t]
+        def resid(p):
+            return r - (p[0] - p[1] * s - p[2] * v - p[3] * t)
+
+        sol = least_squares(
+            resid,
+            x0=[0.0, cfg.k_sm_init, cfg.k_v_init, cfg.k_t_init],
+            bounds=([-10.0, 0.0, 0.0, 0.0], [10.0, 50.0, 50.0, cfg.k_t_max]),
+        )
+        c, k_sm, k_v, k_t = (float(x) for x in sol.x)
     return {
         "log_offset": c,
         "k_sm": k_sm,

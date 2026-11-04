@@ -36,6 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from ecohydro_sm.config import load_config  # noqa: E402
 
 DATE_RE = re.compile(r"(?<!\d)(\d{8})(?!\d)")
+# 月度合成产品常按 YYYYMM / YYYY_MM 命名；只认 8 位日期会把它们的日期全丢掉
+MONTH_RE = re.compile(r"(?<!\d)(\d{6})(?!\d)")
+YEAR_MONTH_RE = re.compile(r"(?<!\d)(\d{4})[-_](\d{2})(?!\d)")
 
 GLOBS = {
     "s1_grd": ["*VV*.tif", "*grd*.tif", "S1*.tif"],
@@ -70,6 +73,30 @@ def parse_dates(name: str, limit: int = 1) -> list[datetime]:
         except ValueError:
             continue
     return out
+
+
+def parse_scene_date(name: str) -> tuple[datetime | None, str]:
+    """解析 GRD / S-2 产品日期，返回 (日期, 时间粒度)。
+
+    ``scene`` = 逐景（YYYYMMDD）；``monthly`` = 月度合成（YYYYMM / YYYY_MM）。
+    月度产品的日期统一记为该月 1 日，**只是占位**；真实代表日期在
+    ``00b_align_temporal.py`` 里按配置取月中，避免把月首当观测日。
+    文件名里的 6 位时间戳（如 ``T200000``）月份为 00，会被校验排除。
+    """
+    m = DATE_RE.search(name)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%Y%m%d"), "scene"
+        except ValueError:
+            pass
+    for y, mm in YEAR_MONTH_RE.findall(name):
+        if 1990 <= int(y) <= 2100 and 1 <= int(mm) <= 12:
+            return datetime(int(y), int(mm), 1), "monthly"
+    for tok in MONTH_RE.findall(name):
+        y, mm = int(tok[:4]), int(tok[4:])
+        if 1990 <= y <= 2100 and 1 <= mm <= 12:
+            return datetime(y, mm, 1), "monthly"
+    return None, ""
 
 
 def scan(root: Path, patterns: list[str]) -> list[Path]:
@@ -109,8 +136,11 @@ def build_manifests(inv: Inventory, cfg: dict) -> None:
     for key in ("s1_grd", "s2_l2a"):
         base = inv.root / paths.get(key, f"data_raw/yanco/{key}")
         for p in scan(base, GLOBS[key]):
-            d = parse_dates(p.name)
-            row = {"path": str(p), "date": d[0].strftime("%Y-%m-%d") if d else "",
+            d, gran = parse_scene_date(p.name)
+            row = {"path": str(p),
+                   "date": d.strftime("%Y-%m-%d") if d else "",
+                   "temporal_granularity": gran,
+                   "year_month": d.strftime("%Y-%m") if d else "",
                    "file": p.name}
             row.update(inspect_raster(p))
             (inv.grd if key == "s1_grd" else inv.s2).append(row)
@@ -219,6 +249,44 @@ def run_checks(inv: Inventory, cfg: dict) -> None:
             "HyP3 给的是逐干涉对 γ_ij，不是逐时相 γ(t)。"
             "pairwise 模式请用 calibrate_decay_coefficients_pairwise 等新函数；"
             "直接把 pair 堆成 (n_time,...) 喂给 invert_sm_from_coherence 会得到无物理意义的结果。"))
+
+    # ---- 时间支撑对齐（逐对 vs 月度） ----
+    grans = [r.get("temporal_granularity") for r in inv.grd + inv.s2]
+    n_monthly = sum(1 for g in grans if g == "monthly")
+    n_dated = sum(1 for g in grans if g)
+    if n_monthly:
+        c(Check("WARN", "时间支撑错配",
+                f"{n_monthly}/{n_dated} 个光学/GRD 时相是**月度合成**（30 天状态量），"
+                "而相干性是 12 天**差分**观测量。月值既不是端点值也不是 ΔV，"
+                "且月内多个干涉对会共享同一月值。必须先跑 00b_align_temporal.py，"
+                "按路线 B（重导逐景）/ A（γ 降采样到月 + 月际差分）对齐。"))
+    else:
+        c(Check("NOTE", "时间支撑",
+                "未检出月度产品；仍须确认 S-2 / GRD 是逐景而非按月命名但被误判。"
+                "逐景时用 pair_endpoint_difference() 插值到干涉对端点。"))
+
+    if dts:
+        if len(set(dts)) == 1:
+            c(Check("WARN", "k_t 可识别性",
+                    f"全部 {len(dts)} 对 Δt 都是 {dts[0]} 天：k_t·Δt 与截距 c 完全共线，"
+                    "**必须固定 k_t=0**（或删去该项），否则标定出的系数无物理意义。"
+                    "HyP3 配对策略由用户自选，若想要可变 Δt 需改用 nearest-neighbor depth=2 或 SBAS 混合基线。"))
+        else:
+            c(Check("PASS", "k_t 可识别性",
+                    f"Δt 有 {len(set(dts))} 种取值（{min(dts)}–{max(dts)} 天），"
+                    "时间与含水量去相干可分离，保留 k_t 项。"))
+
+    cross = 0
+    n_pair_dated = 0
+    for p in inv.pairs:
+        if p.get("ref_date") and p.get("sec_date"):
+            n_pair_dated += 1
+            if p["ref_date"][:7] != p["sec_date"][:7]:
+                cross += 1
+    if n_pair_dated:
+        c(Check("NOTE", "跨月干涉对",
+                f"{cross}/{n_pair_dated} 对跨月（{100*cross/n_pair_dated:.0f}%）。"
+                "月度合成下月内对的 ΔV 恒为 0，是纯噪声样本；路线 C 只用跨月对。"))
     c(Check("NOTE", "闭合相位质控",
             "单对 INSAR_GAMMA 产品不含闭合相位（需三景三元组），本轮跳过该质控，"
             "论文中须明确声明。"))
@@ -268,9 +336,11 @@ def write_outputs(inv: Inventory, out_dir: Path) -> None:
         lines.append(f"- `[{icon.get(c.level, '--')}] {c.level} · {c.item}` {c.message}")
     lines += ["", "## 下一步", "",
               "1. 先消除所有 FAIL 项（尤其网格一致性与时间基线）。",
-              "2. 用 match_table.csv 建立 S-1 / S-2 / 干涉对 / 站点的时相对齐。",
-              "3. 再跑 scripts/01_prepare_s2.py → 02 → 03 → 04（L1）。",
-              "4. L2 走 pairwise 模式，见 docs/yanco_workflow.md。", ""]
+              "2. **运行 scripts/00b_align_temporal.py**：把逐干涉对与逐景/月度光学、GRD "
+              "落到同一张对齐表，产出 pair_alignment.csv 与 alignment_report.md。",
+              "3. 光学/GRD 为月度合成时，按报告决定路线 B（重导逐景）或 A（γ 降采样到月 + 月际差分）。",
+              "4. 再跑 scripts/01_prepare_s2.py → 02 → 03 → 04（L1）。",
+              "5. L2 走 pairwise 模式，见 docs/yanco_workflow.md 与 docs/temporal_alignment.md。", ""]
     (out_dir / "inventory_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -307,7 +377,16 @@ def selftest() -> int:
         assert all(r["gap_days"] == 2 for r in inv.match_rows), "时相配对错误"
         assert (root / "outputs/yanco/inventory_report.md").exists()
         assert (root / "outputs/yanco/manifest_insar_pairs.csv").exists()
-        print("selftest OK: 40 GRD / 40 S-2 / 40 干涉对，dt=12d，光学间隔=2d")
+        # 月度合成文件名（YYYYMM / YYYY_MM）也要能解析，且 6 位时间戳不能被误判
+        d1, g1 = parse_scene_date("S2_NDVI_202103.tif")
+        d2, g2 = parse_scene_date("S2_NDVI_2021_03.tif")
+        d3, g3 = parse_scene_date("S2_NDVI_20210315.tif")
+        d4, g4 = parse_scene_date("S1_T200000_corr.tif")
+        assert (d1, g1) == (datetime(2021, 3, 1), "monthly")
+        assert (d2, g2) == (datetime(2021, 3, 1), "monthly")
+        assert g3 == "scene" and d3 == datetime(2021, 3, 15)
+        assert (d4, g4) == (None, "")
+        print("selftest OK: 40 GRD / 40 S-2 / 40 干涉对，dt=12d，光学间隔=2d；YYYYMM 解析正常")
         for c in inv.checks[:4]:
             print(f"  [{c.level}] {c.item}: {c.message[:70]}")
         return 0

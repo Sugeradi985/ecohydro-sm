@@ -33,8 +33,27 @@ UTM 带 **55S（EPSG:32755）**，地势平坦（117–150 m），年降水约 3
 S-1 文件名日期是 **UTC**；OzNet 站点时间戳多为澳洲东部时（AEST UTC+10 / AEDT UTC+11）。
 **降轨约当地清晨 6–7 点 = 前一日 19–21 UTC**，所以按文件名日期直接匹配站点当地日期会整体错位。
 
-**动作**：把站点时间统一换算为 UTC（用固定偏移，不要用系统本地时区），
+**动作**：把站点时间统一换算为 UTC，**用 ZoneInfo 按日期判定 AEST/AEDT**
+（`sar_acquisition_utc()`，固定 +10 会在夏令时期间错 1 小时），
 再取 S-1 **过境时刻**的值，而不是日平均。日平均会平滑掉降水/灌溉响应。
+
+### 0.4 已导出的光学 / GRD 是**月值**，相干性是**逐干涉对**
+
+这是本轮新增的结构性问题：12 天**差分**观测量 对 30 天**状态量**。
+**不能直接按「干涉对所在月份」取月值**（量纲错 + 月内对 ΔV=0 的重复样本 +
+灌溉脉冲被平滑）。完整方案见 **`docs/temporal_alignment.md`**，本文件只给决策摘要。
+
+**动作（按顺序）**：
+
+1. 查原 GEE 脚本，确认月度合成的 reducer：`mean`/`median` 可用作月度状态，
+   **`max`（NDVI MVC）禁止当端点值**；把结论填进
+   `configs/yanco.yaml` 的 `input_spec.monthly_composite`。
+2. 跑 `scripts/00b_align_temporal.py --root .`，产出 `pair_alignment.csv` 与
+   `alignment_report.md`（含时间支撑诊断、跨月对比例、**k_t 可识别性**判定）。
+3. 加 `--station-csv` 用 OzNet 20 min 观测做诊断：R² < 0.5 就必须在 GEE
+   **重导逐景**产品（时间支撑路线 T-B）。
+4. 若 HyP3 全部干涉对 Δt 相同（常见：都是 12 天），**固定 k_t = 0** ——
+   k_t·Δt 与截距 c 完全共线，拟合出来的系数无物理意义。
 
 ---
 
@@ -89,9 +108,14 @@ python scripts/00_prepare_yanco.py --selftest   # 不依赖真实数据，先验
 - 入射角掩膜 30–45°；过境前后 1 天降水 > 1 mm 剔除
 - **VWC 域掩膜**：YA 灌溉作物（水稻/大麦/玉米）VWC 常 > 2 kg/m²，
   L2 在这些像元**打标降级，不承诺精度**
-- **不要做月度最大值合成**（引入物候偏差）；
-  用「最近有效光学观测 + 距 SAR 过境天数」作为独立特征，让模型学时间错配
-- `match_table.csv` 里的 `gap_days` 就是这一列的来源
+- **当前输入是月值**：月值可直接用于 L1 月尺度基线、干湿端元、WCM 参数约束
+  和与 ERA5-Land/SMAP 的三重配置（时间尺度天然一致）；
+  **但不能支撑逐干涉对相干性**（见 §0.4 与 `temporal_alignment.md`）
+- 若按路线 B 重导逐景产品：**不要做月度最大值合成**（引入物候偏差），
+  用「最近有效光学观测 + 距 SAR 过境天数」作为独立特征，让模型学时间错配；
+  `pair_alignment.csv` 的 `s2_gap_*_days` 就是这一列的来源
+- GEE 重导 GRD 时必须按 `relativeOrbitNumber` + 升/降轨 + 极化过滤，
+  否则月内混合入射角会引入伪变化
 
 ---
 
@@ -127,7 +151,29 @@ python scripts/00_prepare_yanco.py --selftest   # 不依赖真实数据，先验
 而 HyP3 `INSAR_GAMMA` 给的是 **逐干涉对 γ_ij**。
 **把 pair 堆成 `(n_time, ...)` 直接喂进去，得到的是语义错误的"时序"，反演结果没有物理意义。**
 
-两条路：
+### 6.0 还有第二重不匹配：时间支撑（逐对 vs 月度）
+
+除了"pair 不是时序"，还有"12 天差分 vs 30 天状态"。三条**时间支撑**对齐路线
+（记作 T-A/T-B/T-C；配置 `temporal_alignment.strategy: B` 即 T-B。
+**与本节后面处理 pair 结构的「路线 A / 路线 B」是两组不同的选择**）：
+
+| 路线 | 做法 | 定位 |
+|---|---|---|
+| **T-B（主结果）** | GEE 重导**逐景** S-2 / GRD → `pair_endpoint_difference()` 插值到 t_i、t_j → 端点差分 | 物理正确，保留灌溉脉冲 |
+| **T-A（稳健性）** | `aggregate_pairs_to_monthly()` 把 γ_ij 聚合成 γ_M；解释变量改用 `monthly_state_to_difference()` 的**月际差分**，保留 `dt_mean` 协变量 | 统计诚实，但 2 年仅 24 个样本，只能报月尺度 |
+| **T-C（敏感性）** | `select_cross_month_pairs()` 只留跨月对 | 样本减半、支撑仍错配，须声明 limitation |
+
+**推荐 T-B 作主结果 + T-A 作并列稳健性检验**，两者之差就是时间支撑敏感度。
+决策依据用 `temporal_support_diagnostic()`（OzNet 20 min 站点）：R² < 0.5 必须走 T-B。
+完整方法、GEE 逐景导出代码、10 条常见错误见 **`docs/temporal_alignment.md`**。
+
+**两个硬约束**：
+
+1. Δt 全为 12 天时 `fit_temporal_decay: false`（k_t 与 c 共线）；
+2. **L1 与 L2 比较前必须统一时间尺度**：L1 若用月度 GRD 产品、L2 是逐日期序列，
+   先把 L2 聚合到月（或 L1 也改用逐景）再比，否则「差 < 0.06」判据失效。
+
+下面两条路解决的是"pair 不是时序"这一重问题；时间支撑按 §6.0 先处理。
 
 ### 路线 A（推荐先用）：pairwise 模式，不重跑数据
 
@@ -160,6 +206,9 @@ sm = integrate_pair_deltas(mag, ref_idx, sec_idx, n_dates,
 **三个不能省的点**：
 
 1. **k_t 项**（时间去相干）：12 天对与 24 天对的基线不同，不建模会把时间去相干吸进 k_sm；
+   **但 Δt 全相同时 k_t 与截距 c 共线、不可识别**，必须传
+   `PairCoherenceSMConfig(fix_k_t_zero=True)`（配置里 `fit_temporal_decay: "auto"`），
+   见 `docs/temporal_alignment.md` §3.2；
 2. **符号必须由外部参考给**：反演只给幅度。不提供符号会得到单调上升的 SM 序列——
    `test_missing_signs_produces_monotonic_increase` 把这个失败模式固定下来了；
 3. **闭合相位质控本轮跳过**：单对产品不含闭合相位（需三景三元组），
@@ -222,13 +271,17 @@ Yanco 比黑河更容易被国际审稿人接受，正好接替此前「双研�
 ```
 [ ] 00_prepare_yanco.py --selftest           工具自检
 [ ] 00_prepare_yanco.py --root .            清点，清零所有 FAIL
-[ ] 核对 bbox / 时区 / 真值类型 / 辐射口径
+[ ] 核对 bbox / 时区 / 真值类型 / 辐射口径 / 月度 reducer
+[ ] 00b_align_temporal.py --root . --station-csv <OzNet CSV>
+                                         时间支撑对齐 + 诊断（决定 T-A/T-B/T-C）
+[ ] 若诊断要求 T-B：回 GEE 重导逐景 S-2 / GRD（保留逐景日期、锁定轨道）
 [ ] 统一网格（EPSG:32755），同名点残差 < 0.5 像元
 [ ] GRD dB → 线性 + 斑点滤波（相干性支路不复用）
 [ ] 站点表：UTC 过境时刻、0-5 cm、YA/YB 分层、代表性筛选
 [ ] 01_prepare_s2.py                        指数与掩膜
-[ ] 02 → 03 → 04                            L1 基线
-[ ] L2 pairwise：标定 → 反演 → 符号 → 积分
+[ ] 02 → 03 → 04                            L1 基线（注意与 L2 统一时间尺度）
+[ ] L2 pairwise：标定 → 反演 → 符号 → 积分；Δt 恒定时固定 k_t=0
+[ ] T-A 月度降采样作并列稳健性检验（重新标定 k，保留 dt_mean）
 [ ] 08_validate.py                          空间块 CV + 分层 + 三重配置
 [ ] 与 Yanco 已发表基准对比，出第一张图
 ```
