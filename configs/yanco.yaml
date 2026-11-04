@@ -1,0 +1,113 @@
+# Yanco 方法学试验区（澳大利亚 NSW，Murrumbidgee 流域）
+# 定位：L1 + L2 的方法学验证区，不做 L3/L4（无时序形变、无地下水井）
+# 注意：Yanco 在澳大利亚**东南部** NSW，不是西南澳。中心约 146.0°E / 34.9°S。
+
+study_area:
+  name: "YANCO"
+  bbox: [145.80, -35.25, 146.55, -34.65]   # [min_lon, min_lat, max_lon, max_lat]
+  epsg_utm: 32755                            # WGS84 / UTM zone 55S
+  description: "OzNet Yanco 土壤水观测网；半干旱灌溉农业 + 旱草地，地势平坦（117-150 m）"
+
+# ---------- 时区与过境时刻（最容易错的一项） ----------
+timing:
+  site_timezone: "Australia/Sydney"   # AEST UTC+10 / AEDT UTC+11（夏令时！）
+  sar_time_basis: "UTC"               # S-1 文件名日期为 UTC
+  # 降轨约当地清晨 6-7 点 = 前一日 19-21 UTC，故文件名日期比站点当地日期早一天
+  descending_local_hour: 6.5
+  match_timezone_offset_hours: 10     # 固定偏移；不要用系统本地时区做换算
+  station_sampling_minutes: 20        # OzNet 原始采样
+
+paths:
+  s1_grd: "data_raw/yanco/s1_grd"            # GEE COPERNICUS/S1_GRD，σ0 dB + angle
+  s2_l2a: "data_raw/yanco/s2_l2a"            # GEE S-2 指数/掩膜结果
+  insar_pairs: "data_raw/yanco/hyp3_insar"   # HyP3 INSAR_GAMMA 解包目录（corr / amp / unw_phase）
+  in_situ: "data_raw/yanco/oznet"            # OzNet 站点 CSV/XLS
+  reference_sm: "data_raw/yanco/reference"   # ERA5-Land / SMAP（三重配置第三、四方）
+  dem: "data_raw/yanco/dem"
+  output: "outputs/yanco"
+
+# ---------- 输入口径 ----------
+input_spec:
+  # GEE S1_GRD 给的是 σ0（dB），带 angle 波段（椭球入射角）；未做斑点滤波
+  # 仓库 dubois_sigma0 预测的正是 σ0（线性功率），故 GRD 与合成库天然一致
+  grd_radiometry: "sigma0_db"
+  grd_to_linear: true                 # 10 ** (dB / 10)
+  grd_has_angle_band: true
+  # HyP3 INSAR_GAMMA：amplitude 为 σ0 power（仅几何校正，未做辐射地形校正）
+  # coherence 为 0-1；像元间距 40 或 80 m（取决于 looks）
+  insar_pixel_spacing_m: 80
+  insar_coherence_band: "corr"
+  insar_amplitude_band: "amp"
+  insar_has_closure_phase: false      # 单对产品无闭合相位，需三景三元组
+  s2_scale: 10                        # GEE 导出分辨率 m
+
+# ---------- L1：表层土壤水 ----------
+l1_retrieval:
+  estimator: "mlp"
+  freq_ghz: 5.405
+  pol: "VV"
+  wcm:
+    a_param: 0.35                     # 必须本地标定；Yanco 文献 VWC-NDVI 关系只作初值
+    b_param: 0.12
+    e_param: 1.0
+  synthetic_db:
+    mv_min: 0.02
+    mv_max: 0.50
+    h_rms_min: 0.3
+    h_rms_max: 3.0
+    vwc_max: 6.0
+    theta_min: 30.0
+    theta_max: 45.0
+    n_samples: 60000
+    noise_db: 0.35
+  residual_correction:
+    enabled: true
+    min_samples_for_model: 20
+  aggregate_factor: 3                 # 10 m -> 30 m；标称分辨率必须等于实际聚合分辨率
+
+# ---------- 掩膜 ----------
+masking:
+  theta_min: 30.0
+  theta_max: 45.0
+  air_temp_threshold_c: 1.0
+  soil_temp_threshold_c: 0.0
+  precip_threshold_mm: 1.0
+  precip_lag_days: 1
+  scl_cloud_buffer_pixels: 1
+  skip_freeze_thaw: true              # Yanco 基本无冻融
+  vwc_limit_kg_m2: 2.0               # 灌溉作物常超此值 -> L2 打标降级
+
+# ---------- L2：干涉对模式（关键） ----------
+# HyP3 给的是逐干涉对 γ_ij，不是逐时相 γ(t)。
+# 仓库原有 invert_sm_from_coherence 需要后者，不能直接喂 HyP3 产品。
+l2_coherence:
+  enabled: true
+  mode: "pairwise"                   # pairwise | date_series（star 网络重跑后用后者）
+  min_gamma: 0.15
+  max_pair_baseline_days: 24
+  min_pairs: 30
+  # 模型：ln γ_ij = c − k_sm·|ΔSM_ij| − k_v·|ΔV_ij| − k_t·Δt_ij
+  fit_temporal_decay: true
+  dry_anchor_sm: 0.02
+  closure_phase_qc: false            # 本轮无三元组，跳过；论文中须声明
+  calibrate_per_region: true
+
+# ---------- 验证 ----------
+validation:
+  spatial_block_size_m: 10000
+  n_splits: 5
+  # YA = 灌溉作物（13 站）、YB = 旱草地（11 站）；必须分层报告，不可合并
+  stratify_by: ["landcover", "irrigation"]
+  stratify_by_vwc_bins: [0, 0.5, 1.5, 3.0, 99.0]
+  triple_collocation:
+    enabled: true
+    datasets: ["product", "era5land", "smap"]
+    max_error_correlation: 0.3
+  report_metrics: ["bias", "rmse", "ubrmse", "crmse", "pearson_r", "anomaly_r"]
+  # 与已发表 Yanco 基准对比（SMAPEx / OzNet 系列）是本区最大优势
+
+# ---------- 本轮关闭 ----------
+l4_storage:
+  enabled: false                     # 单对干涉产品不构成时序形变；Yanco 无水位井
+l3_water_balance:
+  enabled: false                     # 缺灌溉/抽水记录，闭合不成立

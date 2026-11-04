@@ -88,6 +88,9 @@ docs/               工作流说明与实验手册
 docs/station_requirements.md  地面站点的要素、数量、代表性与获取途径
 docs/in_situ_data_sources.md  已有研究案例用了什么站点数据、各自能否公开获取
 docs/next_steps_roadmap.md   下一步行动路线（P0 预检 / 黑河跑通 / 基金写作三线并行）
+docs/yanco_workflow.md       Yanco 试验区完整处理链（HyP3 干涉对 + GEE GRD/S-2）
+configs/yanco.yaml           Yanco 专用配置（EPSG:32755、σ0 口径、pairwise 模式、关闭 L3/L4）
+scripts/00_prepare_yanco.py  数据清点、口径核对、时相配对（支持 --selftest）
 ```
 
 ## 混合架构：GEE + 本地
@@ -97,6 +100,12 @@ docs/next_steps_roadmap.md   下一步行动路线（P0 预检 / 黑河跑通 / 
 | Sentinel-2 云掩膜、NDVI/NDMI/FVC、站点抽表 | **GEE** | 见 `scripts/gee_s2_indices.js`，免下载、分钟级 |
 | Sentinel-1 RTC | 本地（HyP3） | GEE 的 S-1 无地形辐射校正 |
 | InSAR 相干性与形变（L2/L4） | **必须本地** | GEE 没有 S-1 SLC，无相位信息 |
+
+> **HyP3 `INSAR_GAMMA` 是逐干涉对产品**（每对一份 `corr`/`amp`/`unw_phase`），
+> 不是逐时相 γ(t)。直接堆成时序喂给 `invert_sm_from_coherence` 会得到无物理意义的结果。
+> `insar/coherence.py` 提供 pairwise 模式（`calibrate_decay_coefficients_pairwise`、
+> `invert_delta_sm_from_pairs`、`assign_pair_signs`、`integrate_pair_deltas`），
+> 含时间去相干项 k_t 与显式符号赋值。详见 `docs/yanco_workflow.md` §6。
 
 ## 引用
 
